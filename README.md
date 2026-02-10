@@ -23,7 +23,6 @@
 ```
 budonsan/
 ├── main.py                 # GUI 프로그램 진입점
-├── naver_estate_crawler.py # CLI 버전 크롤러 (레거시)
 ├── gui/
 │   ├── main_window.py      # 메인 윈도우 GUI
 │   └── crawler_thread.py   # 크롤링 스레드 클래스
@@ -108,14 +107,6 @@ run_gui.bat
 2. "크롤링 시작" 버튼을 클릭하여 크롤링을 시작합니다.
 3. 진행 상황은 실시간으로 표시되며, 수집된 매물 정보는 테이블에 자동으로 추가됩니다.
 4. 크롤링 완료 후 "엑셀 저장" 또는 "CSV 저장" 버튼을 클릭하여 파일로 저장할 수 있습니다.
-
-### CLI 버전 실행 (레거시)
-
-```bash
-python naver_estate_crawler.py
-```
-
-실행 후 `result.csv` 파일에 결과가 저장됩니다.
 
 ## 주요 화면 구성
 
