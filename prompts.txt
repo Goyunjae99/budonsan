@@ -1,0 +1,508 @@
+[2026-02-09]
+네이버 부동산에서 '용산구 한강로3가 센트럴파크' 단지 매물을 크롤링하는 Python 스크립트 작성 요청
+
+요구사항:
+1. Playwright 라이브러리 사용
+2. '저/중/고'로 표시된 매물은 클릭해서 상세 페이지의 정확한 층수 가져오기
+3. 매물별로 동, 가격, 면적, 상세 층수 수집
+4. 네이버 차단 방지를 위한 랜덤 대기 시간
+5. 결과를 result.csv로 저장
+
+[2026-02-09]
+분석한 내용을 기반으로 해당 지역(서울시 용산구 한강로3가 센트럴파크)의 모든 매물 정보를 수집하여 보여주는 GUI기반의 프로그램을 만들 거야. GUI는 PySide 6패키지를 사용해서 생성할꺼야. 스크래핑 된 데이터를 엑셀 파일로 저장할 수 있는 기능이 포함되어야해. 위 내용을 기반으로 PRD를 생성해 PRD.md 파일에 저장해줘
+
+[2026-02-09]
+작성한 PRD를 기반으로 프로그램을 만들어줘. 필요한 패키지들은 내가 직접 설치할께
+
+[2026-02-09]
+설치중 오류가 났는데 이를 수정해
+
+[2026-02-09]
+오류가 나는데
+
+[2026-02-09]
+아래 조건을 정확히 지켜서 기존 코드를 수정해줘.
+
+[현재 문제]
+- Playwright로 https://new.land.naver.com/complexes/117804 와 같은 URL에 접속하면
+  자동화 탐지로 인해 404 페이지로 리다이렉트되어 매물 크롤링이 실패함.
+- 브라우저 렌더링 기반 크롤링은 안정성이 떨어짐.
+
+[수정 목표]
+- Playwright는 "봇 차단을 통과해 정상 세션/쿠키를 확보하는 용도"로만 사용
+- 실제 매물 수집은 Playwright가 캡처한 내부 매물 JSON API를
+  requests(Session) 기반으로 반복 호출하는 구조로 변경
+- 404 / 429 발생 가능성을 최소화하는 방향으로 구조 개선
+
+[구체적 요구 사항]
+1. Playwright로 처음 접속하는 URL은 반드시 파라미터 없는 단지 메인 URL만 사용
+   예: https://new.land.naver.com/complexes/117804
+   (ms, a, b 같은 쿼리 파라미터 절대 사용하지 말 것)
+
+2. Playwright 설정
+   - headless=False
+   - 실제 크롬 사용 (channel="chrome")
+   - locale="ko-KR", timezone="Asia/Seoul"
+   - launch_persistent_context를 사용해 세션/쿠키 재사용
+
+3. Playwright로 페이지 접속 후,
+   - 네트워크 요청 중 매물 리스트를 반환하는 JSON API 요청을 감지
+   - 해당 요청의 URL, headers, cookies를 추출
+
+4. 이후 크롤링 로직은
+   - requests.Session()으로 전환
+   - 3번에서 확보한 headers + cookies를 사용해
+     매물 리스트 JSON API를 페이지 단위로 반복 호출
+   - HTML 파싱, 페이지 스크롤, DOM 의존 로직은 제거
+
+5. 기존 GUI 구조(PySide6)는 유지
+   - main_window.py / crawler_thread.py / naver_crawler.py 구조는 최대한 유지
+   - naver_crawler.py에
+     "playwright 세션 확보 단계"와
+     "requests 기반 매물 수집 단계"를 명확히 분리
+
+6. 로그 출력 강화
+   - Playwright 단계 성공/실패
+   - API URL 캡처 성공 여부
+   - 매물 페이지별 수집 개수
+   - 404/429 발생 시 재시도 로그
+
+[주의사항]
+- 네이버 서버 정책을 우회하는 과도한 트릭은 사용하지 말 것
+- 구조 개선과 안정성 중심으로 코드 수정
+- 수정 후 전체 코드 파일을 통째로 다시 제공할 것
+
+[2026-02-09]
+[버그 수정 요청] NaverEstateCrawler log_callback AttributeError
+
+문제:
+- 프로그램 실행 후 크롤링 시작 시 아래 오류가 발생하며 중단됨
+  "'NaverEstateCrawler' object has no attribute 'log_callback'"
+
+원인 추정:
+- NaverEstateCrawler 내부에서 self.log_callback을 참조(self.log_callback(...))하는데
+  __init__에서 self.log_callback 멤버가 생성/초기화되지 않았거나,
+  GUI/Thread 쪽에서 넘기는 콜백 이름과 크롤러 쪽 이름이 불일치함.
+
+수정 목표:
+- log_callback이 항상 존재하도록 보장해서 AttributeError가 절대 발생하지 않게 만들 것
+- GUI 로그 출력(텍스트 박스)에 계속 로그가 찍히도록 기존 구조 유지
+
+구체적 요구사항:
+1) NaverEstateCrawler 클래스(정의된 파일: crawler/naver_crawler.py 또는 실제 정의 파일)에
+   - __init__(..., log_callback=None, ...) 파라미터를 추가
+   - self.log_callback = log_callback 로 반드시 저장
+   - (progress_callback/stop_flag 등 기존 파라미터가 있다면 같이 유지)
+
+2) 크롤러의 로그 출력 함수(예: log(), _log(), print_log() 등)에서
+   - self.log_callback이 있을 때만 호출하도록 방어 코드 추가:
+     if self.log_callback: self.log_callback(msg)
+
+3) 크롤러를 생성하는 곳(gui/crawler_thread.py 등)에서
+   - 로그 콜백을 넘기고 있다면 인자명을 반드시 log_callback로 통일
+   - 만약 기존에 logger/on_log/log_func 같은 이름을 쓰고 있으면 한쪽으로 맞춰서 오류가 재발하지 않게 수정
+
+4) 수정 후 실행 흐름:
+   - 크롤링 시작 버튼 클릭 → 크롤러 생성 → 로그가 GUI에 출력 → 크롤링 진행
+   - log_callback 미전달(None)이어도 크롤러가 크래시 없이 동작해야 함(단, GUI 로그만 안 찍혀도 됨)
+
+출력 형식:
+- 변경된 파일은 “전체 코드”로 통째로 다시 제공해줘 (부분 수정본 말고 전체 파일)
+
+추가:
+- 이번 수정은 기능 추가가 아니라 “AttributeError 제거 + 콜백 연결 안정화”가 목적이므로
+  기존 로직(크롤링/GUI/스레드 구조)은 최대한 유지해줘.
+
+[2026-02-09]
+이를 적용시키고 매번 main.py를 치고 프로그램을 실행하는게 불편한데 .bat같은 걸 만들어 클릭한번에 프로그램이 실행되게 만들어
+
+[2026-02-09]
+[리팩터링 요청] requests 직접 호출 제거 → Playwright 브라우저 컨텍스트에서 API 요청까지 수행 (429 근본 해결)
+
+상황/문제:
+- 지금 코드가 Playwright로 세션(쿠키)만 확보한 뒤, requests(Session)로 매물 API를 직접 호출함.
+- 이 구조에서 429(Rate Limit)가 “기다려도/다음날/다른 환경에서도” 계속 발생함.
+- 단순 백오프/대기는 해결이 안 되고, 요청 형태 자체가 탐지/차단된 것으로 보임.
+
+목표(핵심 1줄):
+- requests 기반 API 호출을 전부 없애고, “Playwright 브라우저 컨텍스트의 네트워크 스택”으로만 매물 JSON API를 호출하도록 바꿔줘.
+  (즉, 브라우저가 사이트 내부에서 XHR/fetch로 부르는 것과 최대한 동일하게 만들기)
+
+필수 요구사항:
+1) URL 입력은 파라미터 없는 단지 메인만 사용
+   - 예: https://new.land.naver.com/complexes/117804
+   - ms/a/b 같은 쿼리 파라미터는 접속 URL에 붙이지 말 것
+
+2) Playwright 실행 방식
+   - launch_persistent_context 사용(프로필/쿠키 재사용)
+   - headless=False
+   - channel="chrome"
+   - locale="ko-KR", timezone="Asia/Seoul"
+   - (가능하면) userAgent를 실제 크롬 UA로 고정
+
+3) “세션 확보 → API 호출”을 모두 Playwright 내부에서 처리
+   - 단지 페이지 접속 후 필요한 경우 매물 탭/필터를 1회 클릭해서 정상 플로우를 만든 다음 진행
+   - API 호출은 아래 우선순위로 구현:
+     A) context.request.get/post(...)  (가능하면 이걸 우선)
+     B) page.evaluate(() => fetch(...)) 로 브라우저 fetch 실행 후 JSON 반환
+
+4) 데이터 수집 로직
+   - 기존에 쓰던 “매물 리스트 API URL(articles)”을 동일하게 호출하되,
+     requests가 아니라 Playwright 컨텍스트 요청으로 호출
+   - 페이지네이션(page) / 페이지크기(size)로 전체 매물 수집
+   - 응답 JSON 파싱 → 기존 GUI 테이블/CSV 저장 로직에 그대로 연결
+
+5) 429 대응(Playwright 컨텍스트 내부에서)
+   - 429 발생 시 Retry-After가 있으면 그만큼 대기 후 재시도
+   - 없으면 지수 백오프 + 랜덤 지터 적용
+   - 너무 많은 재시도 시 “쿨다운(예: 2~5분)” 후 재시도
+
+6) 기존 구조 최대 유지
+   - PySide6 GUI(main_window.py)와 스레드(crawler_thread.py) 흐름은 그대로 유지
+   - 변경은 주로 crawler/naver_crawler.py(또는 naver_estate_crawler.py) 내부의 “요청 수행 방식” 교체에 집중
+   - 로그는 현재처럼 GUI 로그창에 계속 출력되게 유지
+
+완료 조건(검증):
+- 크롤링 시작 버튼 → 브라우저가 정상 페이지로 접속(404 안 뜸)
+- 매물 리스트가 실제로 수집되어 GUI 표/CSV에 들어감
+- requests 모듈에 의존하지 않아도 동작(직접 호출 코드 제거)
+
+이 요구사항대로 코드 수정해줘.
+
+[2026-02-09]
+[긴급 수정] Playwright 브라우저가 about:blank→사이트→404→즉시 종료됨 (컨텍스트가 조기 close)
+
+증상:
+- 크롤링 시작하면 크롬 창이 about:blank와 네이버부동산 페이지가 잠깐 뜨다가
+  404 화면으로 바뀐 뒤 바로 창이 사라짐
+- 로그에 "Target page, context or browser has been closed"가 반복됨
+→ 즉, 페이지/컨텍스트가 크롤링 중간에 닫혀서 요청 자체가 불가능한 상태
+
+목표:
+- 브라우저/컨텍스트를 크롤링 루프가 끝날 때까지 절대 닫지 않게 라이프사이클 수정
+- 404가 떠도 “창이 닫히지 않고” 로그를 남기고 다음 단계(재시도/중지 대기)를 수행하도록 변경
+- close는 오직 (1) 크롤링 정상 종료, (2) 사용자가 ‘중지’ 버튼을 누른 경우에만 실행
+
+필수 수정사항:
+1) sync_playwright() / launch_persistent_context() 생성 위치를 확인하고
+   반드시 CrawlerThread.run() 내부에서 생성 + 크롤링 전체가 끝날 때까지 유지되게 해줘.
+   (메인 스레드에서 만들고 워커에서 쓰는 구조 금지)
+
+2) 코드에 `with sync_playwright() as p:`가 있다면,
+   그 블록 범위를 크롤링 전체 루프를 감싸도록 확장해줘.
+   (블록 종료 시 자동 close되어 지금처럼 창이 바로 닫히는 문제가 생김)
+
+3) 예외 처리 점검:
+   - 404/timeout/429 등 예외가 발생해도 바로 context.close()/browser.close()를 하지 말고,
+     상태를 로그로 남긴 뒤 재시도 또는 사용자 중지 대기 상태로 가도록 수정
+   - finally에서 무조건 close하는 코드가 있으면 “조건부 close”로 바꿔줘
+     (stop_flag가 True이거나 run 종료 시점에만 close)
+
+4) 디버깅 로그 추가:
+   - context/page 생성 시점 로그
+   - page.on("close") / context.on("close") 이벤트 핸들러로 "누가 닫았는지" 로그
+   - close 호출 직전에 스택/사유를 로그로 출력
+
+완료 조건:
+- 크롤링 시작 후 브라우저 창이 즉시 사라지지 않고 유지되어야 함
+- 404가 뜨더라도 창이 닫히지 않고 로그가 계속 찍혀야 함
+- "Target page/context/browser has been closed"가 더 이상 발생하지 않아야 함
+
+[2026-02-09]
+직접 API를 쏘지 말고, Playwright로 https://new.land.naver.com 메인에 접속한 뒤 검색창에 '용산구 한강로3가 센트럴파크'를 타이핑하고 검색 버튼을 누르는 방식으로 로직을 바꿔줘. 그 후에 나오는 리스트에서 상세 층수를 추출하자.
+
+[2026-02-09]
+[목표]
+네이버 부동산 크롤러에서 반복적으로 발생하는 401 / 404 / 429 오류를 해결하고,
+“저/중/고”로 표시된 매물까지 포함하여 실제 층수(숫자)를 안정적으로 수집하도록 구조를 고도화해줘.
+
+[현재 문제 요약]
+- 자동화 실행 시 about:blank → 네이버 부동산 → 404 페이지가 잠깐 뜬 뒤 브라우저가 종료됨
+- 로그에 "Target page, context or browser has been closed" 오류가 발생한 적 있음
+- requests 기반 API 호출, DOM 기반 클릭/셀렉터 방식 모두 안정성이 떨어짐
+- 단순 대기나 재시도로는 429가 해결되지 않음
+
+[핵심 설계 원칙 (반드시 지킬 것)]
+1) Playwright는 “정상 사용자 플로우 생성 + 세션 워밍업” 용도로만 사용
+2) 실제 데이터 수집은 Playwright와 동일한 브라우저 컨텍스트에서 발생하는
+   JSON API 요청을 기준으로 수행
+3) DOM 셀렉터 의존(우측 상세창 클릭 후 텍스트 추출)은 최소화
+4) Playwright page / context / browser는 크롤링 도중 절대 닫히지 않게 유지
+5) PySide6(QThread) 환경에서 Playwright 생성~종료 라이프사이클을
+   반드시 CrawlerThread.run() 내부에서 관리
+
+[세션 워밍업 및 정상 플로우]
+- https://land.naver.com/ 에 먼저 접속하여 초기 쿠키/리다이렉트 플로우를 정상 수행
+- 이후 https://new.land.naver.com/complexes/117804 (파라미터 없는 URL)로 이동
+- 매물 탭(매매/전세 등) 또는 필수 UI 동작 1회를 수행하여
+  사이트가 실제로 호출하는 “매물 리스트 JSON API” 요청이 발생하도록 함
+
+[수집 대상]
+- 단지: 서울시 용산구 한강로3가 센트럴파크 (complexNo=117804)
+- 수집 항목:
+  - 동
+  - 가격
+  - 전용면적
+  - 실제 층수(숫자)
+
+[층수 추출 방식 (중요)]
+- 매물 리스트에서 층수가 없거나 “저/중/고”로 표시된 매물도 포함
+- 각 매물의 상세 JSON API(브라우저에서 실제 호출되는 엔드포인트)를
+  Playwright의 동일 컨텍스트(context.request 또는 page.evaluate(fetch))에서 호출
+- JSON 응답 필드 중 “실제 층수 / 전체층 (예: 15/30)” 정보를 찾아 추출
+- DOM 텍스트 파싱은 JSON으로 불가능한 경우에만 최후의 수단으로 사용
+
+[안정화 및 오류 처리]
+- 401 / 404 / 429 발생 시:
+  - 호출한 URL
+  - 응답 상태 코드
+  - Retry-After 헤더 존재 여부
+  - page / context가 살아있는지 여부
+  를 로그로 남길 것
+- 404가 발생하더라도 브라우저/컨텍스트를 즉시 종료하지 말 것
+- close는 오직:
+  (1) 크롤링 정상 종료
+  (2) 사용자가 중지 버튼을 누른 경우
+  에만 수행
+
+[저장 관련 (중요)]
+- 크롤러에서 CSV/엑셀 파일을 직접 생성하지 말 것
+- 수집된 데이터는 기존 GUI 테이블 및
+  [엑셀 저장] / [CSV 저장] 버튼 로직으로 전달만 수행
+
+[옵션 처리]
+- playwright-stealth, AutomationControlled, debugger 무력화 등의 방식은
+  기본 필수로 적용하지 말 것
+- 위 정상 플로우 + JSON API 방식으로도 404가 지속될 경우에만
+  옵션으로 분기 적용
+
+[완료 조건]
+- 크롤링 시작 후 브라우저가 즉시 종료되지 않아야 함
+- 실제 매물 데이터가 GUI 테이블에 누적되어 표시되어야 함
+- “저/중/고” 매물도 실제 층수(숫자)로 수집되어야 함
+
+[2026-02-09]
+추가 정보:
+- list API 호출 시 사용된 Cookie는 아래와 같다.
+  (NNB=VV367CBWHAGGQ; ASID=79a029cd000001967092e70f00000058; _ga=GA1.1.881016898.1747717309; tooltipDisplayed=true; _fwb=151MMi2xBTJckGuN8N3NOSA.1753773074452; NAC=ISkOB0QKgC8i; bnb_tooltip_shown_finance_v1=true; _ga_SQ24F7Q7YW=GS2.1.s1763112465$o15$g0$t1763112468$j57$l0$h0; _ga_K2ECMCJBFQ=GS2.1.s1763112465$o15$g0$t1763112468$j57$l0$h0; m_loc=bc94b4d10889e95ab9dd4f32f1034d7fd7bb85fa9e109007abe77d543e9120b5; NV_WETR_LAST_ACCESS_RGN_M="MDkxMTA2MTU="; NV_WETR_LOCATION_RGN_M="MDkxMTA2MTU="; ba.uuid=3367f247-e5be-41cb-859c-c2ee686be67c; nhn.realestate.article.rlet_type_cd=A01; _ga_451MFZ9CFM=GS2.1.s1769655836$o2$g1$t1769655839$j57$l0$h0; SHOW_FIN_BADGE=Y; cto_bundle=BSSAFV9tZkQ0M3hmaWE1MkhiZFdZR0JvM0VuVFRHVHhjUEdGenJpcDFBcndIJTJCOEhtaTh5UWlTWnZaV0pTMU0lMkJSJTJGV2k1d2hEYkJ3WCUyQmxoS09kRnJuVnBRbjFkRnRDdFYzQnpWREpFSTdmV3RPMDlQMHZreW11TjUzRHMlMkZrNUVXSCUyQmdNcE1WTUExTGJUc0ZqVW5QdE1XWGVJdHclM0QlM0Q; _fbp=fb.1.1769671277286.453204623167652449; bnb_tooltip_shown_payment_v1=true; NACT=1; page_uid=jhCxElqosAKssB126qV-146061; realestate.beta.lastclick.cortar=1117012800; PROP_TEST_KEY=1770605781622.52c0e96f9159d18a2b2d19e3b81f0eae296ba069b17c7b82ae1635b8d4bfa065; PROP_TEST_ID=74e6ea5787c2ca43d31300a73fbce5b222d2df3002f999c1de4e7699e1f85d10; nhn.realestate.article.trade_type_cd=A1; SRT30=1770608382; SRT5=1770608382; landHomeFlashUseYn=N; BUC=ddZj23HToIDfj77O4wCNMHltn4nSKZ9bmvPKAbdjCFw=)
+
+- 아래 헤더는 반드시 함께 사용해야 한다:
+  - User-Agent (브라우저와 동일)
+  - Referer: https://new.land.naver.com/complexes/117804
+  - Origin: https://new.land.naver.com
+
+- POST Payload에서 페이지네이션은 page/pageNo 방식이 아니라
+  응답의 result.lastInfo를 그대로 다음 요청의 lastInfo로 전달하는 방식이다.
+
+[2026-02-09]
+fin.land.naver.com list API 호출을 브라우저와 1:1로 동일하게 만들기 (429/401/404 안정화)
+
+문제:
+- 현재 프로그램에서 list API 호출 시 401/404/429 또는 status=None 등이 발생하며 수집이 0건으로 끝남.
+- F12에서 확인한 “정상 성공(200)” 요청과 동일한 헤더(Referer/Origin/User-Agent)를 코드에 강제로 적용해야 함.
+
+확정된 정답 정보(브라우저에서 캡처한 값):
+- Origin: https://fin.land.naver.com
+- Referer: https://fin.land.naver.com/complexes/117804?articleTradeTypes=A1&tab=article&transactionPyeongTypeNumber=4&transactionTradeType=A1
+- User-Agent: Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36
+
+대상 API(브라우저에서 200 OK 확인):
+- URL: https://fin.land.naver.com/front-api/v1/complex/article/list
+- Method: POST
+- Content-Type: application/json
+- Payload(기본):
+  {
+    "articleSortType": "RANKING_DESC",
+    "complexNumber": "117804",
+    "dongNumbers": [],
+    "lastInfo": [],
+    "pyeongTypes": [],
+    "size": 30,
+    "tradeTypes": ["A1"],
+    "userChannelType": "MOBILE"
+  }
+
+필수 수정 사항:
+1) API 호출부에서 headers를 “강제 덮어쓰기”로 적용해줘.
+   - 기존 코드에서 headers를 만들더라도, 최종 요청 직전에 아래 키는 반드시 아래 값으로 overwrite:
+     - "Origin" = (위 Origin)
+     - "Referer" = (위 Referer)
+     - "User-Agent" = (위 User-Agent)
+     - "Accept" = "application/json"
+     - "Content-Type" = "application/json"
+   - Cookie는 하드코딩하지 말고 Playwright 컨텍스트가 가진 쿠키를 자동으로 쓰되,
+     요청에 Cookie가 포함되는지 로그로 확인 가능하게 해줘.
+
+2) Playwright APIRequestContext.post 호출에서 json= 인자 사용 금지.
+   - payload는 json.dumps(..., ensure_ascii=False)로 문자열화해서 data= 로 보내도록 수정.
+
+3) 1~3페이지 검증 모드 추가:
+   - 첫 요청(page1)부터 status code를 로그로 출력
+   - 응답 JSON에서 아래 값을 “실제 존재하는 경로를 탐색해서” 찾아 로그 출력:
+     - totalCount (값 + 경로)
+     - hasNextPage (값 + 경로)
+     - lastInfo (값 + 경로)
+   - 다음 페이지 요청은 응답에서 받은 lastInfo를 payload.lastInfo에 그대로 넣어 호출 (추측 금지)
+   - page1~page3 연속 200이 아니면 즉시 중단하고,
+     실패 시 아래를 로그로 출력:
+       - 요청 URL
+       - 최종 적용된 Origin/Referer/User-Agent 값
+       - 응답 status
+       - 응답 텍스트 앞부분 200~500자
+
+4) GUI/저장 관련:
+   - 크롤러에서 CSV/엑셀 저장 파일 생성은 추가하지 말 것.
+   - 기존 GUI 테이블 및 [엑셀 저장]/[CSV 저장] 버튼 파이프라인으로 데이터만 전달.
+
+완료 조건:
+- page1~page3 POST 호출이 200으로 연속 성공
+- list 응답에서 매물 데이터가 1개 이상 파싱되어 GUI 테이블에 표시됨
+
+[2026-02-09]
+[429 근본 해결] APIRequestContext로 list API를 재호출하지 말고, 브라우저가 생성한 list 응답을 캡처해서 데이터로 사용하도록 구조 변경
+
+현상:
+- https://fin.land.naver.com/front-api/v1/complex/article/list 를 APIRequestContext.post로 호출하면 page=1부터 429(TOO_MANY_REQUESTS) 발생
+- 헤더(Origin/Referer/User-Agent)를 맞춰도 429가 지속됨
+
+목표:
+- 프로그램이 list API를 “직접 재호출”하지 않게 한다.
+- 대신, Playwright 페이지에서 정상 UI 플로우로 매물 리스트가 로드될 때 발생하는
+  list XHR 응답(JSON)을 page.on("response")로 캡처하여 파싱한다.
+
+필수 변경:
+1) APIRequestContext.post 기반 list 호출 로직을 제거하거나 비활성화
+2) Playwright에서 아래 정상 플로우를 반드시 수행:
+   - land.naver.com 접속 → new.land.naver.com/complexes/117804 이동
+   - 매물 탭(매매 A1 등) 클릭 또는 리스트가 갱신되는 UI 액션 1회 수행
+3) response 캡처:
+   - page.on("response")에서 response.url()이
+     "https://fin.land.naver.com/front-api/v1/complex/article/list" 인 응답을 감지
+   - status==200일 때 response.json()을 읽어 result.list(또는 실제 경로)을 파싱
+   - 파싱한 매물 데이터를 기존 GUI 테이블로 전달
+4) 페이지네이션(추가 수집):
+   - 추가 페이지가 필요하면 “API를 직접 재호출”하는 대신
+     UI 상에서 '더보기/스크롤/다음 페이지 로딩' 같은 정상 동작으로 트리거하고
+     발생하는 list 응답을 계속 캡처해서 누적한다.
+   - (가능하면) 무한스크롤/더보기 버튼을 반복 클릭/스크롤하는 방식으로 구현
+5) 429 처리:
+   - 캡처된 응답이 429면 즉시 중단하고 재시도 루프를 돌리지 말 것(차단 악화 방지)
+   - GUI 로그에 “429 발생, 더보기/스크롤 중단”만 출력
+
+금지:
+- list API를 context.request로 재호출하는 로직을 다시 넣지 말 것
+- CSV/엑셀 저장 로직 추가 금지(기존 GUI 버튼 유지)
+
+완료 조건:
+- 최소 1회 정상 UI 로딩으로 list 응답(200)을 캡처해 매물 1개 이상 GUI에 표시
+
+[2026-02-09]
+[버그 수정] Playwright APIRequestContext.post()에 json= 인자 사용으로 요청이 실패함
+
+현재 로그:
+- APIRequestContext.post() got an unexpected keyword argument 'json'
+- 그 결과 status=None, 수집 0개
+
+수정 요구:
+1) context.request.post(...) 또는 APIRequestContext.post(...) 호출에서 json=payload 사용을 제거
+2) payload는 json.dumps(payload, ensure_ascii=False)로 문자열화해서 data= 로 전송
+3) headers에 Content-Type: application/json, Accept: application/json 명시
+4) 요청 성공 여부를 확인할 수 있게 res.status, res.text() 일부를 로그로 출력
+
+예시 형태(참고):
+body = json.dumps(payload, ensure_ascii=False)
+res = api_context.post(url, data=body, headers={...,"Content-Type":"application/json"})
+print(res.status)
+
+이 수정 후 status가 200/401/429로 정상 출력되어야 함.
+
+[2026-02-09]
+좋아요. 그런데 지금 단계에서 실제로 429가 해결됐는지 검증이 필요합니다.
+
+추가 요구:
+1) 제가 캡처한 'list' 요청은 다음과 같습니다.
+   - URL: https://fin.land.naver.com/front-api/v1/complex/article/list
+   - Method: POST
+   - Payload:
+     {
+       "articleSortType": "RANKING_DESC",
+       "complexNumber": "117804",
+       "dongNumbers": [],
+       "lastInfo": [],
+       "pyeongTypes": [],
+       "size": 30,
+       "tradeTypes": ["A1"],
+       "userChannelType": "MOBILE"
+     }
+
+2) 위 Payload를 그대로 사용해서 context.request.post로 첫 요청을 보내고,
+   아래를 반드시 로그로 출력해 주세요.
+   - status code
+   - totalCount(또는 총 매물 수)
+   - hasNextPage(또는 다음 페이지 존재 여부)
+   - lastInfo의 실제 값 (다음 요청에 그대로 넣을 값)
+
+3) 그 다음 요청부터는 응답에서 받은 lastInfo를 그대로 다음 요청 payload의 lastInfo로 넣어서
+   2페이지, 3페이지까지 연속으로 200이 나오는지 확인 로그를 남겨 주세요.
+
+4) 만약 lastInfo 경로가 'result.lastInfo'가 아니라면,
+   실제 응답 JSON에서 lastInfo가 존재하는 정확한 경로를 코드에서 찾아 적용해 주세요
+   (추측 금지, 실제 JSON 키를 탐색해서 맞추기)
+
+이 검증 로그가 200으로 확인되어야 다음 단계(상세 층수 추출)로 넘어갈 수 있습니다.
+
+[2026-02-09]
+자동설치에 실행하도록 바꿔
+
+[2026-02-09]
+[404 해결 + list 캡처 성공] new.land로 이동하면 즉시 /404로 리다이렉트되어 list XHR이 발생하지 않아 0건 수집됨
+
+현상:
+- Playwright로 https://new.land.naver.com/complexes/117804 진입 시
+  about:blank → new.land.naver.com/404 로 바뀌며 페이지가 정상 렌더링되지 않음
+- 그 결과 list 응답 캡처 방식에서도 list 요청이 발생하지 않아 0건
+
+수정 목표:
+- new.land 진입을 메인 경로로 쓰지 말고,
+  fin.land 단지 페이지로 직접 진입하여 list XHR이 발생하도록 변경
+- list XHR(https://fin.land.naver.com/front-api/v1/complex/article/list) 응답을 캡처해 파싱
+
+필수 변경:
+1) 단지 진입 URL을 아래로 변경(하드코딩 가능, complexNo만 변수):
+   https://fin.land.naver.com/complexes/117804?tab=article&articleTradeTypes=A1&tradeType=A1
+
+2) 페이지 진입 직후 404 탐지 로직 추가:
+   - page.url 또는 document.title, body 텍스트에 "찾을 수 없습니다" / "/404" 등이 나오면
+     즉시 fin.land URL로 재이동(또는 시작부터 fin.land만 사용)
+
+3) list 캡처 트리거:
+   - fin.land 페이지 로딩 후 반드시 리스트가 로딩되도록 스크롤 또는 탭 클릭 1회 수행
+   - 그 다음 page.wait_for_response로 list 응답(200) 1회 확보 후 파싱 시작
+
+4) 디버그 로그:
+   - 첫 navigation 후 최종 page.url 출력
+   - navigation 중 30x 응답(리다이렉트) 발생 시, from→to 로그 출력
+   - list 응답 캡처 성공 시 "list 200 captured" 로그 출력
+   - 30초 내 list 응답이 없으면 실패로 중단(재시도 루프 금지)
+
+완료 조건:
+- 브라우저가 /404로 떨어지지 않고 fin.land 단지 페이지에서 list XHR(200)을 최소 1회 캡처
+- 매물 1개 이상 GUI에 표시
+
+[2026-02-09]
+기존의 단지 ID 직접 접속 방식이 계속 404 차단을 유발하고 있어. 다음 로직으로 코드를 전면 수정해줘.
+
+1. **검색 시뮬레이션 로직**: 
+   - `https://new.land.naver.com` 메인 페이지로 이동해.
+   - 상단 검색창에 '서울시 용산구 한강로3가 센트럴파크'를 입력하고 검색 버튼을 눌러.
+   - 검색 결과에서 해당 단지를 클릭하여 이동하는 방식으로 변경해줘 (이게 404를 피하는 가장 확실한 방법이야).
+
+2. **자동화 흔적 제거 (Deep Stealth)**:
+   - `page.add_init_script`를 사용하여 `Object.defineProperty(navigator, 'webdriver', {get: () => undefined})` 코드를 반드시 삽입해.
+   - `window.chrome` 객체를 모킹(Mocking)하여 일반 크롬 브라우저처럼 보이게 해줘.
+
+3. **404 감지 시 재시도**:
+   - 만약 URL에 '404'가 포함되면 즉시 브라우저 컨텍스트를 새로 생성하고, 유저 에이전트를 변경하여 다시 시도하는 로직을 넣어줘.
+
+4. **정확한 층수 추출**:
+   - 단지에 들어간 후 매물을 클릭했을 때 나오는 우측 상세정보 테이블에서 '층수/해당층' 항목을 파싱해줘.
