@@ -43,7 +43,11 @@ class NaverEstateCrawler:
         self._page = None
 
         self._warmup_url = "https://new.land.naver.com"
-        self._search_keyword = "서울시 용산구 한강로3가 센트럴파크"
+        self._fin_entry_url = (
+            "https://fin.land.naver.com/complexes/117804"
+            "?tab=article&articleTradeTypes=A1&tradeType=A1"
+        )
+        self._fin_api_url = "https://fin.land.naver.com/front-api/v1/complex/article/list"
         self._default_user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -130,21 +134,33 @@ class NaverEstateCrawler:
 
             await asyncio.sleep(2)
 
-            # 2) 검색 시뮬레이션으로 단지 이동 (재시도 포함)
-            for attempt in range(1, self._max_nav_retries + 1):
-                await self._search_and_open_complex(page)
-                await asyncio.sleep(1.5)
-                self._log(f"최종 page.url: {page.url}")
-                if not await self._is_404_page(page):
-                    break
-                self._log(f"⚠ 404 감지. 재시도 {attempt}/{self._max_nav_retries}")
-                await asyncio.sleep(2 + attempt)
-                if attempt == self._max_nav_retries:
-                    self._log("✗ 404 회피 실패. 세션 종료")
-                    return False
+            # 2) fin.land 단지 페이지 이동
+            self._log(f"단지 페이지 이동: {self._fin_entry_url}")
+            response = await self._safe_goto(page, self._fin_entry_url)
+            await asyncio.sleep(1.5)
+            self._log(f"최종 page.url: {page.url}")
+            if await self._is_404_page(page):
+                self._log("✗ 404 감지. fin.land 단지 페이지 진입 실패")
+                return False
+
+            # 3) list 응답 캡처 리스너 등록
+            self._attach_list_response_listener(page)
 
             # 4) 매물 탭/필터 1회 클릭
             await self._try_trigger_article_api(page)
+
+            # 5) list 응답 1회 캡처 (30초)
+            try:
+                list_resp = await page.wait_for_response(
+                    lambda r: r.url == self._fin_api_url and r.status == 200,
+                    timeout=30000
+                )
+                data = await list_resp.json()
+                self._list_responses.append(data)
+                self._log("list 200 captured")
+            except Exception:
+                self._log("list 응답 30초 내 미발견. 수집 중단")
+                return False
 
             self._log("✓ 세션 워밍업 및 단지 이동 완료")
             self._log("=" * 50)
@@ -175,65 +191,6 @@ class NaverEstateCrawler:
             except Exception:
                 continue
         self._log("매물 탭/필터 클릭은 생략됨")
-
-    async def _search_and_open_complex(self, page: Page):
-        """검색창에 키워드 입력 후 단지 이동"""
-        self._log(f"검색어 입력: {self._search_keyword}")
-        search_selectors = [
-            "input[placeholder*='지역']",
-            "input[placeholder*='단지']",
-            "input[placeholder*='검색']",
-            "input[type='text']",
-        ]
-        search_box = None
-        for sel in search_selectors:
-            try:
-                search_box = await page.wait_for_selector(sel, timeout=8000)
-                if search_box:
-                    break
-            except Exception:
-                continue
-
-        if not search_box:
-            self._log("✗ 검색창을 찾을 수 없습니다.")
-            return
-
-        await search_box.click()
-        await search_box.fill("")
-        await page.type("input:focus", self._search_keyword, delay=80)
-        await asyncio.sleep(0.8)
-
-        button_selectors = [
-            "button[aria-label*='검색']",
-            "button:has-text('검색')",
-            "button[type='submit']",
-        ]
-        clicked = False
-        for sel in button_selectors:
-            try:
-                btn = await page.query_selector(sel)
-                if btn:
-                    await btn.click()
-                    clicked = True
-                    break
-            except Exception:
-                continue
-
-        if not clicked:
-            await page.keyboard.press("Enter")
-
-        await page.wait_for_load_state("domcontentloaded")
-        await asyncio.sleep(1.0)
-
-        # 자동완성/검색 결과에서 단지 선택
-        link = await page.query_selector("a[href*='/complexes/']")
-        if link:
-            await link.click()
-            await page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(1.0)
-            self._log("✓ 단지 상세 페이지 이동 완료")
-        else:
-            self._log("⚠ 단지 링크를 찾지 못했습니다.")
 
     async def _recreate_context(self):
         """컨텍스트 재생성 (UA 변경 없음)"""
